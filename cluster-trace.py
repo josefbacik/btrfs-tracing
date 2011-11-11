@@ -67,11 +67,11 @@ for line in infile:
         else:
             avg_setup_time = (avg_setup_time + (end_time - start_time)) / 2
 
-        if min_setup_time == 0 or min_setup_time < (end_time - start_time):
+        if min_setup_time == 0 or min_setup_time > (end_time - start_time):
             min_setup_time = end_time - start_time
 
         if max_setup_time < (end_time - start_time):
-            max_start_time = (end_time - start_time)
+            max_setup_time = (end_time - start_time)
 
         continue
 
