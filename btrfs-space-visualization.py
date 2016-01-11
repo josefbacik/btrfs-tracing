@@ -8,6 +8,9 @@ from ctracecmd import py_supress_trace_output
 from ctracecmd import tracecmd_buffer_instances
 from ctracecmd import tracecmd_buffer_instance_handle
 
+reservations = {}
+block_groups = []
+space_infos = []
 
 class Blockgroup:
     def __init__(self, offset, size):
@@ -34,13 +37,13 @@ class Spaceinfo:
         self.bytes_used += bytes_used
         self.bytes_readonly += bytes_super
 
-def find_block_group(block_groups, offset):
+def find_block_group(offset):
     for  block_group in block_groups:
         if (block_group.offset <= offset) and ((block_group.offset + block_group.size) > offset):
             return block_group
     return None
 
-def find_space_info(space_infos, flags):
+def find_space_info(flags):
     for space_info in space_infos:
         if space_info.flags == flags:
             return space_info
@@ -56,9 +59,6 @@ def parse_tracefile(infile):
         new_handle = tracecmd_buffer_instance_handle(trace._handle, 0)
         trace._handle = new_handle
 
-    reservations = {}
-    block_groups = []
-    space_infos = []
     while True:
         rec = trace.read_next_event()
         if not rec:
@@ -66,7 +66,7 @@ def parse_tracefile(infile):
         if rec.name == "btrfs_add_block_group":
             print("adding block group %d-%d" % (rec.num_field("offset"),
             rec.num_field("size")))
-            space_info = find_space_info(space_infos, rec.num_field("flags"))
+            space_info = find_space_info(rec.num_field("flags"))
             space_info.add_block_group(rec.num_field("size"),
                                        rec.num_field("bytes_used"),
                                        rec.num_field("bytes_super"))
@@ -77,8 +77,7 @@ def parse_tracefile(infile):
         if rec.name == "btrfs_space_reservation":
             reserve_type = rec.str_field("type")
             if "enospc" in reserve_type:
-                space_info = find_space_info(space_infos,
-                                             rec.num_field("val"))
+                space_info = find_space_info(rec.num_field("val"))
                 print("Hit enospc, dumping info\n")
                 for r,val in reservations:
                     print("%s: %d\n" % (r, val))
@@ -86,8 +85,7 @@ def parse_tracefile(infile):
                         (space_info.flags, space_info.bytes_may_use,
                          space_info.bytes_used, space_info.bytes_readonly))
             elif "space_info" in reserve_type:
-                space_info = find_space_info(space_infos,
-                                             rec.num_field("val"))
+                space_info = find_space_info(rec.num_field("val"))
                 if rec.num_field("reserve") == 1:
                     space_info.bytes_may_use += rec.num_field("bytes")
                 else:
@@ -100,8 +98,7 @@ def parse_tracefile(infile):
                 reservations[reserve_type] -= rec.num_field("bytes")
 
         if rec.name == "btrfs_reserved_extent_alloc" or rec.name == "btrfs_reserved_extent_free":
-            block_group = find_block_group(block_groups,
-                                           rec.num_field("start"))
+            block_group = find_block_group(rec.num_field("start"))
             if not block_group:
                 print("Huh, didn't find a block group for %d" %
                         (rec.num_field("start")))
@@ -124,6 +121,7 @@ def parse_tracefile(infile):
                 num_leaks += 1
     if num_leaks == 0:
         print("Yay no leaks!")
+
 def record_events():
     events = [ "btrfs:btrfs_add_block_group",
                "btrfs:btrfs_space_reservation",
