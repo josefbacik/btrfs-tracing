@@ -8,9 +8,46 @@ from ctracecmd import py_supress_trace_output
 from ctracecmd import tracecmd_buffer_instances
 from ctracecmd import tracecmd_buffer_instance_handle
 
+import numpy as np
+import matplotlib.pyplot as plt
+
+NSECS_IN_SEC = 1000000000
 reservations = {}
 block_groups = []
 space_infos = []
+space_history = None
+
+class SpaceHistory:
+    def __init__(self):
+        self.used_bytes = 0
+        self.reserved_bytes = 0
+        self.readonly_bytes = 0
+        self.total_bytes = 0
+
+        self.total_hist = {}
+        self.used_hist = {}
+        self.reserved_hist = {}
+        self.readonly_hist = {}
+
+    def add_space(self, ts, total=0, used=0, reserved=0, readonly=0):
+        self.total_bytes += total
+        self.total_hist[ts] = self.total_bytes
+        self.used_bytes += used
+        self.used_hist[ts] = self.used_bytes
+        self.reserved_bytes += reserved
+        self.reserved_hist[ts] = self.reserved_bytes
+        self.readonly_bytes += readonly
+        self.readonly_hist[ts] = self.readonly_bytes
+
+    def remove_space(self, ts, total=0, used=0, reserved=0, readonly=0):
+        self.total_bytes -= total
+        self.total_hist[ts] = self.total_bytes
+        self.used_bytes -= used
+        self.used_hist[ts] = self.used_bytes
+        self.reserved_bytes -= reserved
+        self.reserved_hist[ts] = self.reserved_bytes
+        self.readonly_bytes -= readonly
+        self.readonly_hist[ts] = self.readonly_bytes
 
 class Blockgroup:
     def __init__(self, offset, size):
@@ -30,7 +67,6 @@ class Spaceinfo:
         self.bytes_used = 0
         self.bytes_readonly = 0
         self.bytes_may_use = 0
-        self.reservations = {}
 
     def add_block_group(self, size, bytes_used, bytes_super):
         self.size += size
@@ -64,8 +100,10 @@ def parse_tracefile(infile):
         if not rec:
             break
         if rec.name == "btrfs_add_block_group":
-            print("adding block group %d-%d" % (rec.num_field("offset"),
-            rec.num_field("size")))
+            space_history.add_space(rec.ts, total=rec.num_field("size"),
+                                    used=rec.num_field("bytes_used"),
+                                    readonly=rec.num_field("bytes_super"))
+
             space_info = find_space_info(rec.num_field("flags"))
             space_info.add_block_group(rec.num_field("size"),
                                        rec.num_field("bytes_used"),
@@ -88,7 +126,11 @@ def parse_tracefile(infile):
                 space_info = find_space_info(rec.num_field("val"))
                 if rec.num_field("reserve") == 1:
                     space_info.bytes_may_use += rec.num_field("bytes")
+                    space_history.add_space(rec.ts,
+                                            reserved=rec.num_field("bytes"))
                 else:
+                    space_history.remove_space(rec.ts,
+                                               reserved=rec.num_field("bytes"))
                     space_info.bytes_may_use -= rec.num_field("bytes")
             if reserve_type not in reservations:
                 reservations[reserve_type] = 0
@@ -96,7 +138,6 @@ def parse_tracefile(infile):
                 reservations[reserve_type] += rec.num_field("bytes")
             else:
                 reservations[reserve_type] -= rec.num_field("bytes")
-
         if rec.name == "btrfs_reserved_extent_alloc" or rec.name == "btrfs_reserved_extent_free":
             block_group = find_block_group(rec.num_field("start"))
             if not block_group:
@@ -105,22 +146,60 @@ def parse_tracefile(infile):
                 continue
             space_info = block_group.space_info
             if rec.name == "btrfs_reserved_extent_alloc":
+                space_history.add_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used += rec.num_field("len")
             else:
+                space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
     num_leaks = 0
     for space_info in space_infos:
         if space_info.bytes_may_use != 0:
-            print("Bytes may use leak for space info %d, bytes_may_use %d\n"  %
+            print("Bytes may use leak for space info %d, bytes_may_use %d"  %
                   (space_info.flags, space_info.bytes_may_use))
             num_leaks += 1
-        for name,value in space_info.reservations:
-            if value != 0:
-                print("Reservation for %s outstanding in space info %d, " +
-                      "value %d" % (name, space_info.flags, value))
-                num_leaks += 1
+    for name,value in reservations.iteritems():
+        if value != 0:
+            print("Reservation for %s outstanding, value %d" % (name, value))
+            num_leaks += 1
+
     if num_leaks == 0:
         print("Yay no leaks!")
+
+def visualize_space():
+    max_size = 0
+
+    total_times = sorted(list(space_history.total_hist.keys()))
+    total_vals = []
+    for ts in total_times:
+        total_vals.append(space_history.total_hist[ts])
+
+    used_times = sorted(list(space_history.used_hist.keys()))
+    used_vals = []
+    for ts in used_times:
+        if space_history.used_hist[ts] > max_size:
+            max_size = space_history.used_hist[ts]
+        used_vals.append(space_history.used_hist[ts])
+
+    reserved_times = sorted(list(space_history.reserved_hist.keys()))
+    reserved_vals = []
+    for ts in reserved_times:
+        if space_history.reserved_hist[ts] > max_size:
+            max_size = space_history.reserved_hist[ts]
+        reserved_vals.append(space_history.reserved_hist[ts])
+
+    readonly_times = sorted(list(space_history.readonly_hist.keys()))
+    readonly_vals = []
+    for ts in readonly_times:
+        if space_history.readonly_hist[ts] > max_size:
+            max_size = space_history.readonly_hist[ts]
+        readonly_vals.append(space_history.readonly_hist[ts])
+
+    plt.yticks(range(0, max_size, 1024 * 1024))
+    plt.plot(used_times, used_vals, 'g')
+    plt.plot(reserved_times, reserved_vals, 'r')
+    plt.plot(readonly_times, readonly_vals, 'm')
+    plt.savefig('blah.png')
+    plt.show()
 
 def record_events():
     events = [ "btrfs:btrfs_add_block_group",
@@ -150,4 +229,6 @@ if __name__ == "__main__":
         infile = "trace.dat"
         if args.infile:
             infile = args.infile
+        space_history = SpaceHistory()
         parse_tracefile(infile)
+        visualize_space()
