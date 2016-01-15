@@ -7,15 +7,15 @@ from ctracecmd import pevent_data_comm_from_pid
 from ctracecmd import py_supress_trace_output
 from ctracecmd import tracecmd_buffer_instances
 from ctracecmd import tracecmd_buffer_instance_handle
-
-import numpy as np
-import matplotlib.pyplot as plt
+from graphscreen import GraphScreen
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk
 
 NSECS_IN_SEC = 1000000000
 reservations = {}
 block_groups = []
 space_infos = []
-space_history = None
 
 class SpaceHistory:
     def __init__(self):
@@ -87,7 +87,7 @@ def find_space_info(flags):
     space_infos.append(space_info)
     return space_info
 
-def parse_tracefile(infile):
+def parse_tracefile(infile, space_history):
     trace = Trace(infile)
 
     instances = tracecmd_buffer_instances(trace._handle)
@@ -165,7 +165,7 @@ def parse_tracefile(infile):
     if num_leaks == 0:
         print("Yay no leaks!")
 
-def visualize_space():
+def visualize_space(space_history):
     max_size = 0
 
     total_times = sorted(list(space_history.total_hist.keys()))
@@ -194,12 +194,19 @@ def visualize_space():
             max_size = space_history.readonly_hist[ts]
         readonly_vals.append(space_history.readonly_hist[ts])
 
-    plt.yticks(range(0, max_size, 1024 * 1024))
-    plt.plot(used_times, used_vals, 'g')
-    plt.plot(reserved_times, reserved_vals, 'r')
-    plt.plot(readonly_times, readonly_vals, 'm')
-    plt.savefig('blah.png')
-    plt.show()
+    window = Gtk.Window(title="Btrfs space utilization")
+    window.set_default_size(800, 600)
+    hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+    gscreen = GraphScreen()
+    gscreen.add_datapoints("Used", used_times, used_vals, (0, 1, 0))
+    gscreen.add_datapoints("Reserved", reserved_times, reserved_vals, (1, 0, 0))
+    gscreen.add_datapoints("Readonly", readonly_times, readonly_vals, (0, 0, 1))
+    hbox.pack_start(gscreen, True, True, 0)
+    window.add(hbox)
+    window.connect("delete-event", Gtk.main_quit)
+    window.show_all()
+    Gtk.main()
 
 def record_events():
     events = [ "btrfs:btrfs_add_block_group",
@@ -230,5 +237,5 @@ if __name__ == "__main__":
         if args.infile:
             infile = args.infile
         space_history = SpaceHistory()
-        parse_tracefile(infile)
-        visualize_space()
+        parse_tracefile(infile, space_history)
+        visualize_space(space_history)
