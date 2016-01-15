@@ -55,10 +55,11 @@ class GraphScreen(Gtk.DrawingArea):
 
         # The graph is relative to the x and y labels
         yextents = self.Extents(cr.text_extents(self.ylabel))
-        self.bottomx = yextents.width * 3/2
+        print("cr.get_line_width() is %f" % cr.get_line_width())
+        self.bottomx = yextents.width * 3/2 + cr.get_line_width()
 
         xextents = self.Extents(cr.text_extents(self.xlabel))
-        self.bottomy = height - (xextents.height * 2)
+        self.bottomy = height - (xextents.height * 2 + cr.get_line_width())
 
     def _draw_graph(self, cr, width, height):
         cr.set_source_rgb(0, 0, 0)
@@ -77,12 +78,13 @@ class GraphScreen(Gtk.DrawingArea):
         cr.move_to(xpos, height - gap)
         cr.show_text(self.xlabel)
 
-        cr.move_to(self.bottomx, 0)
-        cr.line_to(self.bottomx, self.bottomy)
+        lw = cr.get_line_width()
+        cr.move_to(self.bottomx - lw, 0)
+        cr.line_to(self.bottomx - lw, self.bottomy + lw)
         cr.stroke()
 
-        cr.move_to(self.bottomx, self.bottomy)
-        cr.line_to(width, self.bottomy)
+        cr.move_to(self.bottomx - lw, self.bottomy + lw)
+        cr.line_to(width, self.bottomy + lw)
         cr.stroke()
 
     def _draw_plots(self, cr, width, height):
