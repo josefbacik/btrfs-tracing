@@ -7,7 +7,7 @@ from ctracecmd import pevent_data_comm_from_pid
 from ctracecmd import py_supress_trace_output
 from ctracecmd import tracecmd_buffer_instances
 from ctracecmd import tracecmd_buffer_instance_handle
-from graphscreen import GraphScreen
+from graphscreen import GraphWindow
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
@@ -194,17 +194,11 @@ def visualize_space(space_history):
             max_size = space_history.readonly_hist[ts]
         readonly_vals.append(space_history.readonly_hist[ts])
 
-    window = Gtk.Window(title="Btrfs space utilization")
-    window.set_default_size(800, 600)
-    hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-
-    gscreen = GraphScreen()
-    gscreen.add_datapoints("Used", used_times, used_vals, (0, 1, 0))
-    gscreen.add_datapoints("Reserved", reserved_times, reserved_vals, (1, 0, 0))
-    gscreen.add_datapoints("Readonly", readonly_times, readonly_vals, (0, 0, 1))
-    hbox.pack_start(gscreen, True, True, 0)
-    window.add(hbox)
-    window.connect("delete-event", Gtk.main_quit)
+    window = GraphWindow()
+    window.add_datapoints("Total", total_times, total_vals, (1, 1, 0))
+    window.add_datapoints("Used", used_times, used_vals, (0, 1, 0))
+    window.add_datapoints("Reserved", reserved_times, reserved_vals, (1, 0, 0))
+    window.add_datapoints("Readonly", readonly_times, readonly_vals, (0, 0, 1))
     window.show_all()
     Gtk.main()
 

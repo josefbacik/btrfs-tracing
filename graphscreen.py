@@ -21,6 +21,7 @@ class GraphScreen(Gtk.DrawingArea):
             self.ypoints = ypoints
             self.color = color
             self.connected = connected
+            self.enabled = True
 
     def __init__(self):
         Gtk.DrawingArea.__init__(self)
@@ -36,10 +37,12 @@ class GraphScreen(Gtk.DrawingArea):
         self.xmin = None
         self.ymax = 0
         self.ymin = None
+        self.enabled_plots = 0
 
     def add_datapoints(self, name, xpoints, ypoints, color, connected=True):
         dp = self.DataPoints(name, xpoints, ypoints, color, connected)
         self.plots.append(dp)
+        """
         if xpoints[-1] > self.xmax:
             self.xmax = xpoints[-1]
         if not self.xmin or self.xmin < xpoints[0]:
@@ -48,6 +51,31 @@ class GraphScreen(Gtk.DrawingArea):
             self.ymax = ypoints[-1]
         if not self.ymin or self.ymin < ypoints[0]:
             self.ymin = ypoints[0]
+        print("added %s xmin %d xmax %d ymin %d ymax %d" %
+                (name, self.xmin, self.xmax, self.ymin, self.ymax))
+        """
+    def toggle_datapoint(self, name, toggle):
+        self.xmax = 0
+        self.xmin = None
+        self.ymax = 0
+        self.ymin = 0
+        self.enabled_plots = 0
+
+        for data in self.plots:
+            if data.name == name:
+                data.enabled = toggle
+            if not data.enabled:
+                continue
+            self.enabled_plots += 1
+            if max(data.xpoints) > self.xmax:
+                self.xmax = max(data.xpoints)
+            if not self.xmin or self.xmin < min(data.xpoints):
+                self.xmin = min(data.xpoints)
+            if max(data.ypoints) > self.ymax:
+                self.ymax = max(data.ypoints)
+            if self.ymin > min(data.ypoints):
+                self.ymin = min(data.ypoints)
+        self.queue_draw()
 
     def _adjust_graph_values(self, cr, width, height):
         self.width = width
@@ -90,10 +118,9 @@ class GraphScreen(Gtk.DrawingArea):
     def _draw_plots(self, cr, width, height):
         yticks = self.bottomy / (self.ymax - self.ymin)
         xticks = (width - self.bottomx) / (self.xmax - self.xmin)
-        print("xticks is %f, yticks is %f" % (xticks, yticks))
-        print("xmin %d, xmax %d, ymin %d, ymax %d" % (self.xmin, self.xmax,
-        self.ymin, self.ymax))
         for datapoints in self.plots:
+            if datapoints.enabled == False:
+                continue
             cr.set_source_rgb(datapoints.color[0], datapoints.color[1],
                               datapoints.color[2])
             for i in range(0, len(datapoints.xpoints)):
@@ -128,9 +155,12 @@ class GraphScreen(Gtk.DrawingArea):
         cr.fill()
 
         self._draw_graph(cr, width, height)
-        self._draw_plots(cr, width, height)
+        if self.enabled_plots > 0:
+            self._draw_plots(cr, width, height)
 
     def tooltip(self, widget, x, y, keyboard_mode, tooltip):
+        if self.enabled_plots == 0:
+            return False
         if x < self.bottomx or y > self.bottomy:
             return False
 
@@ -157,7 +187,8 @@ class GraphScreen(Gtk.DrawingArea):
             index = data.xpoints.index(xval)
         tipstr = ("Time is %d" % xval)
         for data in self.plots:
-            tipstr += (", %s is %d" % (data.name, data.ypoints[index]))
+            if data.enabled:
+                tipstr += (", %s is %d" % (data.name, data.ypoints[index]))
         tooltip.set_text(tipstr)
         return True
 
@@ -165,16 +196,29 @@ class GraphWindow(Gtk.Window):
     def __init__(self):
         Gtk.Window.__init__(self, title="Btrfs space utliziation")
         self.set_default_size(800, 600)
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        mainbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        drawbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.labelbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 
         self.darea = GraphScreen()
-        hbox.pack_start(self.darea, True, True, 0)
+        drawbox.pack_start(self.darea, True, True, 0)
 
-        self.add(hbox)
+        mainbox.pack_start(drawbox, True, True, 0)
+        mainbox.pack_start(self.labelbox, False, False, 0)
+        self.add(mainbox)
 
         self.connect("delete-event", Gtk.main_quit)
-        self.show_all()
 
+    def add_datapoints(self, name, xpoints, ypoints, color, connected=True):
+        self.darea.add_datapoints(name, xpoints, ypoints, color, connected)
+
+        button = Gtk.ToggleButton(name)
+        button.connect("toggled", self.on_button_toggled, name)
+        button.set_active(True)
+        self.labelbox.pack_start(button, True, False, 0)
+
+    def on_button_toggled(self, button, name):
+        self.darea.toggle_datapoint(name, button.get_active())
 
 def run():
     window = GraphWindow()
