@@ -1,13 +1,15 @@
 import os
 import argparse
 import subprocess
+import gc
+import sys
+import time
 from tracecmd import Trace
 from ctracecmd import pevent_register_comm
 from ctracecmd import pevent_data_comm_from_pid
 from ctracecmd import py_supress_trace_output
 from ctracecmd import tracecmd_buffer_instances
 from ctracecmd import tracecmd_buffer_instance_handle
-from graphscreen import GraphWindow
 
 NSECS_IN_SEC = 1000000000
 reservations = {}
@@ -25,8 +27,11 @@ class SpaceHistory:
         self.used_hist = {}
         self.reserved_hist = {}
         self.readonly_hist = {}
+        self.enabled = True
 
     def add_space(self, ts, total=0, used=0, reserved=0, readonly=0):
+        if not self.enabled:
+            return
         self.total_bytes += total
         self.total_hist[ts] = self.total_bytes
         self.used_bytes += used
@@ -37,6 +42,8 @@ class SpaceHistory:
         self.readonly_hist[ts] = self.readonly_bytes
 
     def remove_space(self, ts, total=0, used=0, reserved=0, readonly=0):
+        if not self.enabled:
+            return
         self.total_bytes -= total
         self.total_hist[ts] = self.total_bytes
         self.used_bytes -= used
@@ -84,18 +91,48 @@ def find_space_info(flags):
     space_infos.append(space_info)
     return space_info
 
-def parse_tracefile(infile, space_history):
-    trace = Trace(infile)
+def parse_tracefile(args, space_history):
+    trace = Trace(args.infile)
+
+    cpustats = trace.cpustats()
+
+    # The format is "Buffer: name\n\n\nCpu0: blah\n\nCpu1: blah\n\n"
+    cpus = cpustats.split('\n\n\n')
+    cpus = cpus[1].split('\n\n')
 
     instances = tracecmd_buffer_instances(trace._handle)
     if instances != 0:
         new_handle = tracecmd_buffer_instance_handle(trace._handle, 0)
         trace._handle = new_handle
 
+    total_events = 0
+    for cpu in range(0, trace.cpus):
+        stats = dict(item.split(':') for item in cpus[cpu].split("\n"))
+        total_events += int(stats['read events'])
+
+    print("Total events %d" % (total_events))
+    cur_event = 0
+    obj_count = 0
+    start_time = time.time()
+    rem = 0
+
     while True:
+        if obj_count > 100000:
+            now = time.time()
+            t = now - start_time
+            start_time = now
+            t /= obj_count
+            rem = total_events - cur_event
+            rem *= t
+            gc.collect()
+            obj_count = 1
+        sys.stdout.write("\r%d - %s seconds remaining" % (cur_event, rem))
+        sys.stdout.flush()
         rec = trace.read_next_event()
         if not rec:
             break
+        cur_event += 1
+        obj_count += 1
         if rec.name == "btrfs_add_block_group":
             space_history.add_space(rec.ts, total=rec.num_field("size"),
                                     used=rec.num_field("bytes_used"),
@@ -135,6 +172,7 @@ def parse_tracefile(infile, space_history):
                 reservations[reserve_type] += rec.num_field("bytes")
             else:
                 reservations[reserve_type] -= rec.num_field("bytes")
+            del reserve_type
         if rec.name == "btrfs_reserved_extent_alloc" or rec.name == "btrfs_reserved_extent_free":
             block_group = find_block_group(rec.num_field("start"))
             if not block_group:
@@ -163,6 +201,7 @@ def parse_tracefile(infile, space_history):
         print("Yay no leaks!")
 
 def visualize_space(space_history):
+    from graphscreen import GraphWindow
     max_size = 0
 
     total_times = sorted(list(space_history.total_hist.keys()))
@@ -207,7 +246,7 @@ def record_events():
                "btrfs:btrfs_flush_space",
              ]
 
-    cmd = [ 'trace-cmd', 'record', '-B', 'enospc', ]
+    cmd = [ 'trace-cmd', 'record', '-B', 'enospc', '-b', '20480', ]
     for e in events:
         cmd.extend(['-e', e])
     subprocess.call(cmd)
@@ -215,19 +254,21 @@ def record_events():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualizer for space usage "+
                                      "in btrfs during operation.")
-    parser.add_argument('-i', '--infile', type=str,
+    parser.add_argument('-i', '--infile', type=str, default="trace.dat",
                         help="Process a given trace.dat file")
     parser.add_argument('-r', '--record', action='store_true',
                         help="Record events that we can replay later")
+    parser.add_argument('-c', '--nogtk', action='store_true',
+                        help="Don't display gtk window, just do the leak check")
     args = parser.parse_args()
 
     if args.record:
         record_events()
     else:
         py_supress_trace_output()
-        infile = "trace.dat"
-        if args.infile:
-            infile = args.infile
         space_history = SpaceHistory()
-        parse_tracefile(infile, space_history)
-        visualize_space(space_history)
+        if args.nogtk:
+            space_history.enabled = False
+        parse_tracefile(args, space_history)
+        if not args.nogtk:
+            visualize_space(space_history)
