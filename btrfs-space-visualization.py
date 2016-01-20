@@ -207,6 +207,8 @@ def record_events():
                "btrfs:btrfs_space_reservation",
                "btrfs:btrfs_reserved_extent_alloc",
                "btrfs:btrfs_reserved_extent_free",
+               "btrfs:btrfs_trigger_flush",
+               "btrfs:btrfs_flush_space",
              ]
 
     cmd = [ 'trace-cmd', 'record', '-B', 'enospc', ]
