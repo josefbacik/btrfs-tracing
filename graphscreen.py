@@ -220,6 +220,10 @@ class GraphWindow(Gtk.Window):
     def on_button_toggled(self, button, name):
         self.darea.toggle_datapoint(name, button.get_active())
 
+    def main(self):
+        self.show_all()
+        Gtk.main()
+
 def run():
     window = GraphWindow()
     Gtk.main()

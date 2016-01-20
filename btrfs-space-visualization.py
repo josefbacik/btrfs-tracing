@@ -8,9 +8,6 @@ from ctracecmd import py_supress_trace_output
 from ctracecmd import tracecmd_buffer_instances
 from ctracecmd import tracecmd_buffer_instance_handle
 from graphscreen import GraphWindow
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
 
 NSECS_IN_SEC = 1000000000
 reservations = {}
@@ -199,8 +196,7 @@ def visualize_space(space_history):
     window.add_datapoints("Used", used_times, used_vals, (0, 1, 0))
     window.add_datapoints("Reserved", reserved_times, reserved_vals, (1, 0, 0))
     window.add_datapoints("Readonly", readonly_times, readonly_vals, (0, 0, 1))
-    window.show_all()
-    Gtk.main()
+    window.main()
 
 def record_events():
     events = [ "btrfs:btrfs_add_block_group",
