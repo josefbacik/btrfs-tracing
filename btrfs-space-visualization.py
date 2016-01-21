@@ -115,6 +115,7 @@ def parse_tracefile(args, space_history):
     obj_count = 0
     start_time = time.time()
     rem = 0
+    run_limit = -1
 
     while True:
         if obj_count > 100000:
@@ -130,6 +131,16 @@ def parse_tracefile(args, space_history):
         sys.stdout.flush()
         rec = trace.read_next_event()
         if rec is None:
+            break
+
+        # First figure out if we have a run time limit
+        if run_limit == -1:
+            if args.time:
+                run_limit = rec.ts + (args.time * NSECS_IN_SEC)
+                print("cur ts is %d, run limit is %d" % (rec.ts, run_limit))
+            else:
+                run_limit = 0
+        if run_limit > 0 and rec.ts > run_limit:
             break
         cur_event += 1
         obj_count += 1
@@ -186,6 +197,12 @@ def parse_tracefile(args, space_history):
             else:
                 space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
+
+    # If we had a run limit we don't want to do the leak detection as it will be
+    # wrong
+    if run_limit > 0:
+        return
+
     num_leaks = 0
     for space_info in space_infos:
         if space_info.bytes_may_use != 0:
@@ -260,6 +277,9 @@ if __name__ == "__main__":
                         help="Record events that we can replay later")
     parser.add_argument('-c', '--nogtk', action='store_true',
                         help="Don't display gtk window, just do the leak check")
+    parser.add_argument('-t', '--time', type=int,
+                        help="Limit the parsing to the given amount of seconds")
+
     args = parser.parse_args()
 
     if args.record:
