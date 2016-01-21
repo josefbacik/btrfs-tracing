@@ -129,7 +129,7 @@ def parse_tracefile(args, space_history):
         sys.stdout.write("\r%d - %s seconds remaining" % (cur_event, rem))
         sys.stdout.flush()
         rec = trace.read_next_event()
-        if not rec:
+        if rec is None:
             break
         cur_event += 1
         obj_count += 1
