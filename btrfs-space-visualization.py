@@ -27,6 +27,15 @@ class SpaceHistory:
         self.used_hist = {}
         self.reserved_hist = {}
         self.readonly_hist = {}
+
+        self.total_times = []
+        self.total_vals = []
+        self.used_times = []
+        self.used_vals = []
+        self.reserved_times = []
+        self.reserved_vals = []
+        self.readonly_times = []
+        self.readonly_vals = []
         self.enabled = True
 
     def add_space(self, ts, total=0, used=0, reserved=0, readonly=0):
@@ -52,6 +61,75 @@ class SpaceHistory:
         self.reserved_hist[ts] = self.reserved_bytes
         self.readonly_bytes -= readonly
         self.readonly_hist[ts] = self.readonly_bytes
+
+    def _build_list(self, hist, ts_start, ts_end):
+        times = sorted(list(hist.keys()))
+        vals = []
+        start = None
+        end = 0
+        for i in range(0, len(times)):
+            ts = times[i]
+            if ts_start > 0:
+                if ts < ts_start:
+                    continue
+                elif start is None:
+                    start = i
+            if ts_end > 0 and ts > ts_end:
+                end = i
+                break
+            vals.append(hist[ts])
+        if start is not None:
+            times[start:end]
+        return times, vals
+
+    def _average_down_list(self, orig_list, max_len):
+        orig_len = len(orig_list)
+        if orig_len <= max_len:
+            return orig_list
+        scale = int(len(orig_list) / max_len)
+        l = []
+        value = 0
+        cur = 0
+        for i in orig_list:
+            value += i
+            cur += 1
+            if cur == scale:
+                l.append(int(value / scale))
+                cur = 0
+                value = 0
+        if cur:
+            l.append(int(value / cur))
+        return l
+
+    def _scale_down_list(self, orig_list, max_len):
+        orig_len = len(orig_list)
+        if orig_len <= max_len:
+            return orig_list
+        scale = int(orig_len / max_len)
+        l = []
+        cur = 0
+        while cur < orig_len:
+            l.append(orig_list[cur])
+            cur += scale
+        if len(l) < max_len:
+            l.append(orig_list[-1])
+        return l
+
+    def build_lists(self, max_vals=0, ts_start=0, ts_end=0):
+        self.total_times, self.total_vals = self._build_list(self.total_hist, ts_start, ts_end)
+        self.used_times, self.used_vals = self._build_list(self.used_hist, ts_start, ts_end)
+        self.reserved_times, self.reserved_vals = self._build_list(self.reserved_hist, ts_start, ts_end)
+        self.readonly_times, self.readonly_vals = self._build_list(self.readonly_hist, ts_start, ts_end)
+
+        if max_vals:
+            self.total_times = self._scale_down_list(self.total_times, max_vals)
+            self.total_vals = self._average_down_list(self.total_vals, max_vals)
+            self.used_times = self._scale_down_list(self.used_times, max_vals)
+            self.used_vals = self._average_down_list(self.used_vals, max_vals)
+            self.reserved_times = self._scale_down_list(self.reserved_times, max_vals)
+            self.reserved_vals = self._average_down_list(self.reserved_vals, max_vals)
+            self.readonly_times = self._scale_down_list(self.readonly_times, max_vals)
+            self.readonly_vals = self._average_down_list(self.readonly_vals, max_vals)
 
 class Blockgroup:
     def __init__(self, offset, size):
@@ -137,7 +215,6 @@ def parse_tracefile(args, space_history):
         if run_limit == -1:
             if args.time:
                 run_limit = rec.ts + (args.time * NSECS_IN_SEC)
-                print("cur ts is %d, run limit is %d" % (rec.ts, run_limit))
             else:
                 run_limit = 0
         if run_limit > 0 and rec.ts > run_limit:
@@ -217,81 +294,20 @@ def parse_tracefile(args, space_history):
     if num_leaks == 0:
         print("Yay no leaks!")
 
-def average_down_list(orig_list, max_len):
-    scale = int(len(orig_list) / max_len)
-    l = []
-    value = 0
-    cur = 0
-    for i in orig_list:
-        value += i
-        cur += 1
-        if cur == scale:
-            l.append(int(value / scale))
-            cur = 0
-            value = 0
-    if cur:
-        l.append(int(value / cur))
-    return l
-
-def scale_down_list(orig_list, max_len):
-    orig_len = len(orig_list)
-    scale = int(orig_len / max_len)
-    l = []
-    cur = 0
-    while cur < orig_len:
-        l.append(orig_list[cur])
-        cur += scale
-    if len(l) < max_len:
-        l.append(orig_list[-1])
-    return l
 
 def visualize_space(args, space_history):
     from graphscreen import GraphWindow
-
-    # Completely arbitrary value
-    maximum_values = 4096
-
-    total_times = sorted(list(space_history.total_hist.keys()))
-    total_vals = []
-    for ts in total_times:
-        total_vals.append(space_history.total_hist[ts])
-
-    used_times = sorted(list(space_history.used_hist.keys()))
-    used_vals = []
-    for ts in used_times:
-        used_vals.append(space_history.used_hist[ts])
-
-    reserved_times = sorted(list(space_history.reserved_hist.keys()))
-    reserved_vals = []
-    for ts in reserved_times:
-        reserved_vals.append(space_history.reserved_hist[ts])
-
-    readonly_times = sorted(list(space_history.readonly_hist.keys()))
-    readonly_vals = []
-    for ts in readonly_times:
-        readonly_vals.append(space_history.readonly_hist[ts])
-
+    max_vals = 0
     if args.average:
-        total_times = scale_down_list(total_times, maximum_values)
-        total_vals = average_down_list(total_vals, maximum_values)
-        used_times = scale_down_list(used_times, maximum_values)
-        used_vals = average_down_list(used_vals, maximum_values)
-        reserved_times = scale_down_list(reserved_times, maximum_values)
-        reserved_vals = average_down_list(reserved_vals, maximum_values)
-        readonly_times = scale_down_list(readonly_times, maximum_values)
-        readonly_vals = average_down_list(readonly_vals, maximum_values)
+        # A completely arbitrary limit
+        max_vals = 4096
+    space_history.build_lists(max_vals)
 
-    print(len(total_times))
-    print(len(total_vals))
-    print(len(used_times))
-    print(len(used_vals))
-    print(len(reserved_times))
-    print(len(reserved_vals))
     window = GraphWindow()
-    window.add_datapoints("Total", total_times, total_vals, (1, 1, 0))
-    window.add_datapoints("Used", used_times, used_vals, (0, 1, 0))
-    window.add_datapoints("Reserved", reserved_times, reserved_vals, (1, 0, 0))
-    window.add_datapoints("Readonly", readonly_times, readonly_vals, (0, 0, 1))
+    window.add_datapoints("Total", space_history.total_times, space_history.total_vals, (1, 1, 0))
+    window.add_datapoints("Used", space_history.used_times, space_history.used_vals, (0, 1, 0))
+    window.add_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals, (1, 0, 0))
+    window.add_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals, (0, 0, 1))
     window.main()
 
 def record_events():
