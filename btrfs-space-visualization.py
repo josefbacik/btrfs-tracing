@@ -217,9 +217,39 @@ def parse_tracefile(args, space_history):
     if num_leaks == 0:
         print("Yay no leaks!")
 
-def visualize_space(space_history):
+def average_down_list(orig_list, max_len):
+    scale = int(len(orig_list) / max_len)
+    l = []
+    value = 0
+    cur = 0
+    for i in orig_list:
+        value += i
+        cur += 1
+        if cur == scale:
+            l.append(int(value / scale))
+            cur = 0
+            value = 0
+    if cur:
+        l.append(int(value / cur))
+    return l
+
+def scale_down_list(orig_list, max_len):
+    orig_len = len(orig_list)
+    scale = int(orig_len / max_len)
+    l = []
+    cur = 0
+    while cur < orig_len:
+        l.append(orig_list[cur])
+        cur += scale
+    if len(l) < max_len:
+        l.append(orig_list[-1])
+    return l
+
+def visualize_space(args, space_history):
     from graphscreen import GraphWindow
-    max_size = 0
+
+    # Completely arbitrary value
+    maximum_values = 4096
 
     total_times = sorted(list(space_history.total_hist.keys()))
     total_vals = []
@@ -229,24 +259,34 @@ def visualize_space(space_history):
     used_times = sorted(list(space_history.used_hist.keys()))
     used_vals = []
     for ts in used_times:
-        if space_history.used_hist[ts] > max_size:
-            max_size = space_history.used_hist[ts]
         used_vals.append(space_history.used_hist[ts])
 
     reserved_times = sorted(list(space_history.reserved_hist.keys()))
     reserved_vals = []
     for ts in reserved_times:
-        if space_history.reserved_hist[ts] > max_size:
-            max_size = space_history.reserved_hist[ts]
         reserved_vals.append(space_history.reserved_hist[ts])
 
     readonly_times = sorted(list(space_history.readonly_hist.keys()))
     readonly_vals = []
     for ts in readonly_times:
-        if space_history.readonly_hist[ts] > max_size:
-            max_size = space_history.readonly_hist[ts]
         readonly_vals.append(space_history.readonly_hist[ts])
 
+    if args.average:
+        total_times = scale_down_list(total_times, maximum_values)
+        total_vals = average_down_list(total_vals, maximum_values)
+        used_times = scale_down_list(used_times, maximum_values)
+        used_vals = average_down_list(used_vals, maximum_values)
+        reserved_times = scale_down_list(reserved_times, maximum_values)
+        reserved_vals = average_down_list(reserved_vals, maximum_values)
+        readonly_times = scale_down_list(readonly_times, maximum_values)
+        readonly_vals = average_down_list(readonly_vals, maximum_values)
+
+    print(len(total_times))
+    print(len(total_vals))
+    print(len(used_times))
+    print(len(used_vals))
+    print(len(reserved_times))
+    print(len(reserved_vals))
     window = GraphWindow()
     window.add_datapoints("Total", total_times, total_vals, (1, 1, 0))
     window.add_datapoints("Used", used_times, used_vals, (0, 1, 0))
@@ -279,7 +319,8 @@ if __name__ == "__main__":
                         help="Don't display gtk window, just do the leak check")
     parser.add_argument('-t', '--time', type=int,
                         help="Limit the parsing to the given amount of seconds")
-
+    parser.add_argument('-a', '--average', action='store_true',
+                        help="Average a large dataset over its time series")
     args = parser.parse_args()
 
     if args.record:
@@ -291,4 +332,4 @@ if __name__ == "__main__":
             space_history.enabled = False
         parse_tracefile(args, space_history)
         if not args.nogtk:
-            visualize_space(space_history)
+            visualize_space(args, space_history)
