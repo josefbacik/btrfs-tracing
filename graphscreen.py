@@ -1,6 +1,7 @@
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk,Gdk
 import cairo
 
 class GraphScreen(Gtk.DrawingArea):
@@ -28,6 +29,10 @@ class GraphScreen(Gtk.DrawingArea):
         self.set_has_tooltip(True)
         self.connect("draw", self.on_draw)
         self.connect("query-tooltip", self.tooltip)
+        self.connect("button-press-event", self.button_press)
+        self.connect("button-release-event", self.button_release)
+        self.set_events(self.get_events() | Gdk.EventMask.BUTTON_PRESS_MASK |
+                        Gdk.EventMask.BUTTON_RELEASE_MASK)
         self.ylabel = "Size"
         self.xlabel = "Time"
         self.width = 0
@@ -38,6 +43,10 @@ class GraphScreen(Gtk.DrawingArea):
         self.ymax = 0
         self.ymin = None
         self.enabled_plots = 0
+        self.rescale_cb = None
+        self.rescale_data = None
+
+        self.cur_rescale_x = None
 
     def add_datapoints(self, name, xpoints, ypoints, color, connected=True):
         dp = self.DataPoints(name, xpoints, ypoints, color, connected)
@@ -54,7 +63,8 @@ class GraphScreen(Gtk.DrawingArea):
         print("added %s xmin %d xmax %d ymin %d ymax %d" %
                 (name, self.xmin, self.xmax, self.ymin, self.ymax))
         """
-    def toggle_datapoint(self, name, toggle):
+
+    def _rescale(self):
         self.xmax = 0
         self.xmin = None
         self.ymax = 0
@@ -62,8 +72,6 @@ class GraphScreen(Gtk.DrawingArea):
         self.enabled_plots = 0
 
         for data in self.plots:
-            if data.name == name:
-                data.enabled = toggle
             if not data.enabled:
                 continue
             self.enabled_plots += 1
@@ -76,6 +84,26 @@ class GraphScreen(Gtk.DrawingArea):
             if self.ymin > min(data.ypoints):
                 self.ymin = min(data.ypoints)
         self.queue_draw()
+
+    def update_datapoints(self, name, xpoints, ypoints):
+        for d in self.plots:
+            if d.name != name:
+                continue
+            d.xpoints = xpoints
+            d.ypoints = ypoints
+            break
+        self._rescale()
+
+    def set_rescale_cb(self, rescale_cb, user_data):
+        self.rescale_cb = rescale_cb
+        self.rescale_data = user_data
+
+    def toggle_datapoint(self, name, toggle):
+        for data in self.plots:
+            if data.name == name:
+                data.enabled = toggle
+                break
+        self._rescale()
 
     def _adjust_graph_values(self, cr, width, height):
         self.width = width
@@ -158,6 +186,12 @@ class GraphScreen(Gtk.DrawingArea):
         if self.enabled_plots > 0:
             self._draw_plots(cr, width, height)
 
+    def _get_xval(self, width, x):
+        adjx = x - self.bottomx
+        xticks = (width - self.bottomx) / (self.xmax - self.xmin)
+        xval = int(self.xmin + (adjx / xticks))
+        return xval
+
     def tooltip(self, widget, x, y, keyboard_mode, tooltip):
         if self.enabled_plots == 0:
             return False
@@ -165,10 +199,7 @@ class GraphScreen(Gtk.DrawingArea):
             return False
 
         # Get the time position our cursor is currently at
-        width = widget.get_allocation().width
-        adjx = x - self.bottomx
-        xticks = (width - self.bottomx) / (self.xmax - self.xmin)
-        xval = int(self.xmin + (adjx / xticks))
+        xval = self._get_xval(widget.get_allocation().width, x)
         success = 0
 
         # This is awful but I don't have the energy to be clever
@@ -192,6 +223,34 @@ class GraphScreen(Gtk.DrawingArea):
         tooltip.set_text(tipstr)
         return True
 
+    def button_press(self, widget, event):
+        if event.x < self.bottomx or event.y > self.bottomy:
+            return
+
+        xval = self._get_xval(widget.get_allocation().width, event.x)
+        self.cur_rescale_x = xval
+
+    def button_release(self, widget, event):
+        if self.cur_rescale_x is None:
+            return
+        width = widget.get_allocation().width
+        x = event.x
+        if x > width:
+            x = width
+        if x < self.bottomx:
+            x = self.bottomx
+        xval = self._get_xval(width, x)
+        if xval > self.cur_rescale_x:
+            ts_start = self.cur_rescale_x
+            ts_end = xval
+        elif xval < self.cur_rescale_x:
+            ts_start = xval
+            ts_end = self.cur_rescale_x
+        else:
+            ts_start = 0
+            ts_end = 0
+        self.rescale_cb(self, self.rescale_data, ts_start, ts_end)
+
 class GraphWindow(Gtk.Window):
     def __init__(self):
         Gtk.Window.__init__(self, title="Btrfs space utliziation")
@@ -208,6 +267,9 @@ class GraphWindow(Gtk.Window):
         self.add(mainbox)
 
         self.connect("delete-event", Gtk.main_quit)
+
+    def set_rescale_cb(self, rescale_cb, user_data):
+        self.darea.set_rescale_cb(rescale_cb, user_data)
 
     def add_datapoints(self, name, xpoints, ypoints, color, connected=True):
         self.darea.add_datapoints(name, xpoints, ypoints, color, connected)

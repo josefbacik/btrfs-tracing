@@ -79,7 +79,7 @@ class SpaceHistory:
                 break
             vals.append(hist[ts])
         if start is not None:
-            times[start:end]
+            times = times[start:end]
         return times, vals
 
     def _average_down_list(self, orig_list, max_len):
@@ -295,6 +295,13 @@ def parse_tracefile(args, space_history):
         print("Yay no leaks!")
 
 
+def rescale_cb(area, space_history, ts_start, ts_end):
+    space_history.build_lists(4096, ts_start, ts_end)
+    area.update_datapoints("Total", space_history.total_times, space_history.total_vals)
+    area.update_datapoints("Used", space_history.used_times, space_history.used_vals)
+    area.update_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals)
+    area.update_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals)
+
 def visualize_space(args, space_history):
     from graphscreen import GraphWindow
     max_vals = 0
@@ -304,6 +311,7 @@ def visualize_space(args, space_history):
     space_history.build_lists(max_vals)
 
     window = GraphWindow()
+    window.set_rescale_cb(rescale_cb, space_history)
     window.add_datapoints("Total", space_history.total_times, space_history.total_vals, (1, 1, 0))
     window.add_datapoints("Used", space_history.used_times, space_history.used_vals, (0, 1, 0))
     window.add_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals, (1, 0, 0))
