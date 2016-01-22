@@ -4,6 +4,7 @@ import subprocess
 import gc
 import sys
 import time
+import binascii
 from tracecmd import Trace
 from ctracecmd import pevent_register_comm
 from ctracecmd import pevent_data_comm_from_pid
@@ -218,6 +219,10 @@ def parse_tracefile(args, space_history):
     rem = 0
     run_limit = -1
 
+    seen_uuids = []
+    if args.fsid:
+        seen_uuids.append(args.fsid)
+
     while True:
         if obj_count > 100000:
             now = time.time()
@@ -244,6 +249,16 @@ def parse_tracefile(args, space_history):
             break
         cur_event += 1
         obj_count += 1
+
+        # Deal with multiple fsid's in the trace data
+        fsid = binascii.hexlify(rec["fsid"].data)
+        if fsid not in seen_uuids:
+            if len(seen_uuids):
+                print("\nSaw a new uuid %s" % fsid)
+            seen_uuids.append(fsid)
+        if fsid != seen_uuids[0]:
+            continue
+
         if rec.name == "btrfs_add_block_group":
             event_str = add_bg(rec)
             flush_events.append([float(rec.ts) / NSECS_IN_SEC,
@@ -264,12 +279,15 @@ def parse_tracefile(args, space_history):
             reserve_type = rec.str_field("type")
             if "enospc" in reserve_type:
                 space_info = find_space_info(rec.num_field("val"))
-                print("Hit enospc, dumping info\n")
-                for r,val in reservations:
-                    print("%s: %d\n" % (r, val))
+                print("\nHit enospc, dumping info\n")
+                for r in reservations.keys():
+                    print("%s: %d" % (r, reservations[r]))
                 print("Space info %d, may_use %d, used %d, readonly %d\n" %
                         (space_info.flags, space_info.bytes_may_use,
                          space_info.bytes_used, space_info.bytes_readonly))
+                flush_events.append([float(rec.ts)/NSECS_IN_SEC, reserve_type,
+                                     str(rec.num_field("bytes"))])
+                continue
             elif "space_info" in reserve_type:
                 space_info = find_space_info(rec.num_field("val"))
                 if rec.num_field("reserve") == 1:
@@ -301,9 +319,11 @@ def parse_tracefile(args, space_history):
                 space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
         if rec.name == "btrfs_trigger_flush":
-            flush_events.append([rec.ts, rec.name, rec.str_field("reason")])
+            flush_events.append([float(rec.ts)/NSECS_IN_SEC, rec.name,
+                                 rec.str_field("reason")])
         if rec.name == "btrfs_flush_space":
-            flush_events.append([rec.ts, rec.name, string(rec.num_field("state"))])
+            flush_events.append([float(rec.ts)/NSECS_IN_SEC, rec.name,
+                                 str(rec.num_field("state"))])
     # If we had a run limit we don't want to do the leak detection as it will be
     # wrong
     if run_limit > 0:
@@ -376,6 +396,8 @@ if __name__ == "__main__":
                         help="Limit the parsing to the given amount of seconds")
     parser.add_argument('-a', '--average', action='store_true',
                         help="Average a large dataset over its time series")
+    parser.add_argument('-f', '--fsid', type=str,
+                        help="Specify the fsid we care about in the trace file")
     args = parser.parse_args()
 
     if args.record:
