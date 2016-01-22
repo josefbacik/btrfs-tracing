@@ -15,6 +15,7 @@ NSECS_IN_SEC = 1000000000
 reservations = {}
 block_groups = []
 space_infos = []
+flush_events = []
 
 class SpaceHistory:
     def __init__(self):
@@ -274,7 +275,10 @@ def parse_tracefile(args, space_history):
             else:
                 space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
-
+        if rec.name == "btrfs_trigger_flush":
+            flush_events.append([rec.ts, rec.name, rec.str_field("reason")])
+        if rec.name == "btrfs_flush_space":
+            flush_events.append([rec.ts, rec.name, string(rec.num_field("state"))])
     # If we had a run limit we don't want to do the leak detection as it will be
     # wrong
     if run_limit > 0:
@@ -316,6 +320,9 @@ def visualize_space(args, space_history):
     window.add_datapoints("Used", space_history.used_times, space_history.used_vals, (0, 1, 0))
     window.add_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals, (1, 0, 0))
     window.add_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals, (0, 0, 1))
+    for events in flush_events:
+        print("adding an event to the liststore")
+        window.liststore.append(events)
     window.main()
 
 def record_events():

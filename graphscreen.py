@@ -265,6 +265,7 @@ class GraphWindow(Gtk.Window):
         mainbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         drawbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.labelbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        treebox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 
         self.darea = GraphScreen()
         drawbox.pack_start(self.darea, True, True, 0)
@@ -273,6 +274,19 @@ class GraphWindow(Gtk.Window):
         mainbox.pack_start(self.labelbox, False, False, 0)
         self.add(mainbox)
 
+        scroll = Gtk.ScrolledWindow()
+        self.liststore = Gtk.ListStore(int, str, str)
+        self.tree = Gtk.TreeView(self.liststore)
+        for i, column_title in enumerate(["Timestamp", "Event", "Value"]):
+            renderer = Gtk.CellRendererText()
+            column = Gtk.TreeViewColumn(column_title, renderer, text=i)
+            self.tree.append_column(column)
+
+        scroll.set_hexpand(True)
+        scroll.add(self.tree)
+        treebox.add(scroll)
+        mainbox.pack_start(treebox, True, True, 0)
+        scroll.show_all()
         self.connect("delete-event", Gtk.main_quit)
 
     def set_rescale_cb(self, rescale_cb, user_data):
@@ -290,6 +304,7 @@ class GraphWindow(Gtk.Window):
         self.darea.toggle_datapoint(name, button.get_active())
 
     def main(self):
+        self.tree.set_model(self.liststore)
         self.show_all()
         Gtk.main()
 
