@@ -4,6 +4,7 @@ gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk,Gdk
 import cairo
 
+NSECS_IN_SEC = 1000000000
 class GraphScreen(Gtk.DrawingArea):
     # Taken from the defintion of cairo_text_extents_t
     class Extents():
@@ -223,12 +224,21 @@ class GraphScreen(Gtk.DrawingArea):
                     break
         else:
             index = data.xpoints.index(xval)
-        tipstr = ("Time is %d" % xval)
+        tipstr = ("Time is %f" % (float(xval) / NSECS_IN_SEC))
         for data in self.plots:
             if data.enabled:
-                tipstr += (", %s is %d" % (data.name, data.ypoints[index]))
+                tipstr += (", %s is %s" %
+                            (data.name, self.pretty_size(data.ypoints[index])))
         tooltip.set_text(tipstr)
         return True
+
+    def pretty_size(self, size):
+        names = ["bytes", "kib", "mib", "gib", "tib"]
+        i = 0
+        while size > 1024:
+            size /= 1024
+            i += 1
+        return str(size) + names[i]
 
     def button_press(self, widget, event):
         if event.x < self.bottomx or event.y > self.bottomy:
@@ -275,7 +285,7 @@ class GraphWindow(Gtk.Window):
         self.add(mainbox)
 
         scroll = Gtk.ScrolledWindow()
-        self.liststore = Gtk.ListStore(int, str, str)
+        self.liststore = Gtk.ListStore(float, str, str)
         self.tree = Gtk.TreeView(self.liststore)
         for i, column_title in enumerate(["Timestamp", "Event", "Value"]):
             renderer = Gtk.CellRendererText()

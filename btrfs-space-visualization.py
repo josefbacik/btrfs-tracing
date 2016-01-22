@@ -139,8 +139,8 @@ class Blockgroup:
 
 class Spaceinfo:
     BTRFS_BLOCK_GROUP_DATA = (1 << 0)
-    BTRFS_BLOCK_GROUP_METADATA = (1 << 1)
-    BTRFS_BLOCK_GROUP_SYSTEM = (1 << 2)
+    BTRFS_BLOCK_GROUP_SYSTEM = (1 << 1)
+    BTRFS_BLOCK_GROUP_METADATA = (1 << 2)
 
     def __init__(self, flags):
         self.flags = flags & (self.BTRFS_BLOCK_GROUP_DATA |
@@ -169,6 +169,28 @@ def find_space_info(flags):
     space_info = Spaceinfo(flags)
     space_infos.append(space_info)
     return space_info
+
+def pretty_size(size):
+    names = ["bytes", "kib", "mib", "gib", "tib"]
+    i = 0
+    while size > 1024:
+        size /= 1024
+        i += 1
+    return str(size) + names[i]
+
+def add_bg(rec):
+    ret = "read, "
+    if rec.num_field("create") == 1:
+        ret = "create, "
+    flags = rec.num_field("flags")
+    if Spaceinfo.BTRFS_BLOCK_GROUP_DATA & flags:
+        ret += "BTRFS_BLOCK_GROUP_DATA, "
+    elif Spaceinfo.BTRFS_BLOCK_GROUP_METADATA & flags:
+        ret += "BTRFS_BLOCK_GROUP_METADATA, "
+    else:
+        ret += "BTRFS_BLOCK_GROUOP_SYSTEM, "
+    ret += pretty_size(rec.num_field("size"))
+    return ret
 
 def parse_tracefile(args, space_history):
     trace = Trace(args.infile)
@@ -223,6 +245,9 @@ def parse_tracefile(args, space_history):
         cur_event += 1
         obj_count += 1
         if rec.name == "btrfs_add_block_group":
+            event_str = add_bg(rec)
+            flush_events.append([float(rec.ts) / NSECS_IN_SEC,
+                                 rec.name, event_str])
             space_history.add_space(rec.ts, total=rec.num_field("size"),
                                     used=rec.num_field("bytes_used"),
                                     readonly=rec.num_field("bytes_super"))
@@ -321,7 +346,6 @@ def visualize_space(args, space_history):
     window.add_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals, (1, 0, 0))
     window.add_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals, (0, 0, 1))
     for events in flush_events:
-        print("adding an event to the liststore")
         window.liststore.append(events)
     window.main()
 
