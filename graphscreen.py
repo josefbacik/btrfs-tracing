@@ -74,6 +74,8 @@ class GraphScreen(Gtk.DrawingArea):
         for data in self.plots:
             if not data.enabled:
                 continue
+            if len(data.xpoints) == 0:
+                continue
             self.enabled_plots += 1
             if max(data.xpoints) > self.xmax:
                 self.xmax = max(data.xpoints)
@@ -111,7 +113,6 @@ class GraphScreen(Gtk.DrawingArea):
 
         # The graph is relative to the x and y labels
         yextents = self.Extents(cr.text_extents(self.ylabel))
-        print("cr.get_line_width() is %f" % cr.get_line_width())
         self.bottomx = yextents.width * 3/2 + cr.get_line_width()
 
         xextents = self.Extents(cr.text_extents(self.xlabel))
@@ -148,6 +149,8 @@ class GraphScreen(Gtk.DrawingArea):
         xticks = (width - self.bottomx) / (self.xmax - self.xmin)
         for datapoints in self.plots:
             if datapoints.enabled == False:
+                continue
+            if len(datapoints.xpoints) == 0:
                 continue
             cr.set_source_rgb(datapoints.color[0], datapoints.color[1],
                               datapoints.color[2])
@@ -187,6 +190,8 @@ class GraphScreen(Gtk.DrawingArea):
             self._draw_plots(cr, width, height)
 
     def _get_xval(self, width, x):
+        if self.xmin is None:
+            return x
         adjx = x - self.bottomx
         xticks = (width - self.bottomx) / (self.xmax - self.xmin)
         xval = int(self.xmin + (adjx / xticks))
@@ -196,6 +201,8 @@ class GraphScreen(Gtk.DrawingArea):
         if self.enabled_plots == 0:
             return False
         if x < self.bottomx or y > self.bottomy:
+            return False
+        if self.xmin is None:
             return False
 
         # Get the time position our cursor is currently at
