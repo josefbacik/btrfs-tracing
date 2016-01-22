@@ -135,8 +135,8 @@ class SpaceHistory:
 
 class Blockgroup:
     def __init__(self, offset, size):
-        self.offset = offset;
-        self.size = size;
+        self.offset = offset
+        self.size = size
 
 class Spaceinfo:
     BTRFS_BLOCK_GROUP_DATA = (1 << 0)
@@ -263,11 +263,15 @@ def parse_tracefile(args, space_history):
             event_str = add_bg(rec)
             flush_events.append([float(rec.ts) / NSECS_IN_SEC,
                                  rec.name, event_str])
-            space_history.add_space(rec.ts, total=rec.num_field("size"),
-                                    used=rec.num_field("bytes_used"),
-                                    readonly=rec.num_field("bytes_super"))
+            flags = rec.num_field("flags")
 
-            space_info = find_space_info(rec.num_field("flags"))
+            # We only care about metadata for space history
+            if flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
+                space_history.add_space(rec.ts, total=rec.num_field("size"),
+                                        used=rec.num_field("bytes_used"),
+                                        readonly=rec.num_field("bytes_super"))
+
+            space_info = find_space_info(flags)
             space_info.add_block_group(rec.num_field("size"),
                                        rec.num_field("bytes_used"),
                                        rec.num_field("bytes_super"))
@@ -313,10 +317,12 @@ def parse_tracefile(args, space_history):
                 continue
             space_info = block_group.space_info
             if rec.name == "btrfs_reserved_extent_alloc":
-                space_history.add_space(rec.ts, used=rec.num_field("len"))
+                if space_info.flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
+                    space_history.add_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used += rec.num_field("len")
             else:
-                space_history.remove_space(rec.ts, used=rec.num_field("len"))
+                if space_info.flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
+                    space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
         if rec.name == "btrfs_trigger_flush":
             flush_events.append([float(rec.ts)/NSECS_IN_SEC, rec.name,
