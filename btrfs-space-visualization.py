@@ -347,14 +347,19 @@ def parse_tracefile(args, space_history):
             else:
                 reservations[reserve_type] -= rec.num_field("bytes")
             del reserve_type
-        if rec.name == "btrfs_reserved_extent_alloc" or rec.name == "btrfs_reserved_extent_free":
+        if (rec.name == "btrfs_reserved_extent_alloc" or
+            rec.name == "btrfs_reserved_extent_free" or
+            rec.name == "btrfs_reserve_extent" or
+            rec.name == "btrfs_reserve_extent_cluster"):
             block_group = find_block_group(rec.num_field("start"))
             if not block_group:
                 print("Huh, didn't find a block group for %d" %
                         (rec.num_field("start")))
                 continue
             space_info = block_group.space_info
-            if rec.name == "btrfs_reserved_extent_alloc":
+            if (rec.name == "btrfs_reserved_extent_alloc" or
+                rec.name == "btrfs_reserve_extent" or
+                rec.name == "btrfs_reserve_extent_cluster"):
                 if record_space(space_info.flags, mixed_bg):
                     space_history.add_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used += rec.num_field("len")
@@ -425,6 +430,8 @@ def record_events():
                "btrfs:btrfs_reserved_extent_free",
                "btrfs:btrfs_trigger_flush",
                "btrfs:btrfs_flush_space",
+               "btrfs:btrfs_reserve_extent",
+               "btrfs:btrfs_reserve_extent_cluster",
              ]
 
     cmd = [ 'trace-cmd', 'record', '-B', 'enospc', '-b', '20480', ]
