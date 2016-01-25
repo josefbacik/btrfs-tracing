@@ -88,7 +88,7 @@ class SpaceHistory:
         orig_len = len(orig_list)
         if orig_len <= max_len:
             return orig_list
-        scale = int(len(orig_list) / max_len)
+        scale = int(orig_len / max_len)
         l = []
         value = 0
         cur = 0
@@ -193,6 +193,28 @@ def add_bg(rec):
     ret += pretty_size(rec.num_field("size"))
     return ret
 
+def flush_event(rec):
+    state = rec.num_field("state")
+    event_str = ""
+    if state == 1:
+        event_str += "FLUSH_DELAYED_ITEMS_NR: "
+    elif state == 2:
+        event_str += "FLUSH_DELAYED_ITEMS: "
+    elif state == 3:
+        event_str += "FLUSH_DELALLOC: "
+    elif state == 4:
+        event_str += "FLUSH_DELALLOC_WAIT: "
+    elif state == 5:
+        event_str += "ALLOC_CHUNK: "
+    elif state == 6:
+        event_str += "COMMIT_TRANS: "
+    event_str += "num_bytes = "
+    event_str += pretty_size(rec.num_field("num_bytes"))
+    event_str += ", orig_bytes = "
+    event_str += pretty_size(rec.num_field("orig_bytes"))
+    event_str += ", ret = " + str(rec.num_field("ret"))
+    return event_str
+
 def record_space(flags, mixed_bg):
     if flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
         return True
@@ -222,6 +244,9 @@ def parse_tracefile(args, space_history):
         total_events += int(stats['read events'])
 
     print("Total events %d" % (total_events))
+    # Just assume 10k events per second to start off with
+    rem = total_events / 10000
+
     cur_event = 0
     obj_count = 0
     start_time = time.time()
@@ -271,14 +296,13 @@ def parse_tracefile(args, space_history):
 
         if rec.name == "btrfs_add_block_group":
             event_str = add_bg(rec)
-            flush_events.append([float(rec.ts) / NSECS_IN_SEC,
-                                 rec.name, event_str])
+            flush_events.append([rec.ts, rec.pid, rec.cpu, rec.name, event_str])
             flags = rec.num_field("flags")
 
             # We only care about metadata for space history
             if flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
                 if flags & Spaceinfo.BTRFS_BLOCK_GROUP_DATA and not mixed_bg:
-                    print("Mixed block group discovered")
+                    print("\nMixed block group discovered")
                     mixed_bg = True
                 space_history.add_space(rec.ts, total=rec.num_field("size"),
                                         used=rec.num_field("bytes_used"),
@@ -296,13 +320,14 @@ def parse_tracefile(args, space_history):
             reserve_type = rec.str_field("type")
             if "enospc" in reserve_type:
                 space_info = find_space_info(rec.num_field("val"))
-                print("\nHit enospc, dumping info\n")
-                for r in reservations.keys():
-                    print("%s: %d" % (r, reservations[r]))
-                print("Space info %d, may_use %d, used %d, readonly %d\n" %
-                        (space_info.flags, space_info.bytes_may_use,
-                         space_info.bytes_used, space_info.bytes_readonly))
-                flush_events.append([float(rec.ts)/NSECS_IN_SEC, reserve_type,
+                if args.nogtk:
+                    print("\nHit enospc, dumping info\n")
+                    for r in reservations.keys():
+                        print("%s: %d" % (r, reservations[r]))
+                    print("Space info %d, may_use %d, used %d, readonly %d\n" %
+                            (space_info.flags, space_info.bytes_may_use,
+                             space_info.bytes_used, space_info.bytes_readonly))
+                flush_events.append([rec.ts, rec.pid, rec.cpu, reserve_type,
                                      str(rec.num_field("bytes"))])
                 continue
             elif "space_info" in reserve_type:
@@ -338,11 +363,10 @@ def parse_tracefile(args, space_history):
                     space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
         if rec.name == "btrfs_trigger_flush":
-            flush_events.append([float(rec.ts)/NSECS_IN_SEC, rec.name,
-                                 rec.str_field("reason")])
+            flush_events.append([rec.ts, rec.pid, rec.cpu, rec.name, rec.str_field("reason")])
         if rec.name == "btrfs_flush_space":
-            flush_events.append([float(rec.ts)/NSECS_IN_SEC, rec.name,
-                                 str(rec.num_field("state"))])
+            event_str = flush_event(rec)
+            flush_events.append([rec.ts, rec.pid, rec.cpu, rec.name, event_str])
     # If we had a run limit we don't want to do the leak detection as it will be
     # wrong
     if run_limit > 0:
@@ -363,12 +387,18 @@ def parse_tracefile(args, space_history):
         print("Yay no leaks!")
 
 
-def rescale_cb(area, space_history, ts_start, ts_end):
+def rescale_cb(window, space_history, ts_start, ts_end):
+    window.liststore.clear()
+    print("ts_start == %ld, ts_end == %ld" % (ts_start, ts_end))
+    for events in flush_events:
+        if ts_start == 0 or events[0] >= ts_start:
+            if ts_end == 0 or events[0] <= ts_end:
+                window.add_flush_event(events)
     space_history.build_lists(4096, ts_start, ts_end)
-    area.update_datapoints("Total", space_history.total_times, space_history.total_vals)
-    area.update_datapoints("Used", space_history.used_times, space_history.used_vals)
-    area.update_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals)
-    area.update_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals)
+    window.darea.update_datapoints("Total", space_history.total_times, space_history.total_vals)
+    window.darea.update_datapoints("Used", space_history.used_times, space_history.used_vals)
+    window.darea.update_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals)
+    window.darea.update_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals)
 
 def visualize_space(args, space_history):
     from graphscreen import GraphWindow
@@ -385,7 +415,7 @@ def visualize_space(args, space_history):
     window.add_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals, (1, 0, 0))
     window.add_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals, (0, 0, 1))
     for events in flush_events:
-        window.liststore.append(events)
+        window.add_flush_event(events)
     window.main()
 
 def record_events():

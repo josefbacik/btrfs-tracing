@@ -44,10 +44,10 @@ class GraphScreen(Gtk.DrawingArea):
         self.ymax = 0
         self.ymin = None
         self.enabled_plots = 0
-        self.rescale_cb = None
-        self.rescale_data = None
 
+        self.rescale_cb = None
         self.cur_rescale_x = None
+        self.selection_line = None
 
     def add_datapoints(self, name, xpoints, ypoints, color, connected=True):
         dp = self.DataPoints(name, xpoints, ypoints, color, connected)
@@ -97,9 +97,8 @@ class GraphScreen(Gtk.DrawingArea):
             break
         self._rescale()
 
-    def set_rescale_cb(self, rescale_cb, user_data):
+    def set_rescale_cb(self, rescale_cb):
         self.rescale_cb = rescale_cb
-        self.rescale_data = user_data
 
     def toggle_datapoint(self, name, toggle):
         for data in self.plots:
@@ -175,6 +174,16 @@ class GraphScreen(Gtk.DrawingArea):
                 cr.line_to(curx, cury)
             cr.stroke()
 
+    def _draw_selection_line(self, cr, width, height):
+        if self.selection_line < self.xmin or self.selection_line > self.xmax:
+            return
+        xticks = (width - self.bottomx) / (self.xmax - self.xmin)
+        xval = self.bottomx + ((self.selection_line - self.xmin) * xticks)
+        cr.set_source_rgb(0, 1, 1)
+        cr.move_to(xval, self.bottomy)
+        cr.line_to(xval, 0)
+        cr.stroke()
+
     def on_draw(self, widget, cr):
         # Fill the background with gray
         width = widget.get_allocation().width
@@ -189,13 +198,15 @@ class GraphScreen(Gtk.DrawingArea):
         self._draw_graph(cr, width, height)
         if self.enabled_plots > 0:
             self._draw_plots(cr, width, height)
+        if self.selection_line is not None:
+            self._draw_selection_line(cr, width, height)
 
     def _get_xval(self, width, x):
         if self.xmin is None:
             return x
         adjx = x - self.bottomx
         xticks = (width - self.bottomx) / (self.xmax - self.xmin)
-        xval = int(self.xmin + (adjx / xticks))
+        xval = long(self.xmin + (adjx / xticks))
         return xval
 
     def tooltip(self, widget, x, y, keyboard_mode, tooltip):
@@ -266,12 +277,12 @@ class GraphScreen(Gtk.DrawingArea):
         else:
             ts_start = 0
             ts_end = 0
-        self.rescale_cb(self, self.rescale_data, ts_start, ts_end)
+        self.rescale_cb(ts_start, ts_end)
 
 class GraphWindow(Gtk.Window):
     def __init__(self):
         Gtk.Window.__init__(self, title="Btrfs space utliziation")
-        self.set_default_size(800, 600)
+        self.set_default_size(1024, 768)
         mainbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         drawbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.labelbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -285,9 +296,13 @@ class GraphWindow(Gtk.Window):
         self.add(mainbox)
 
         scroll = Gtk.ScrolledWindow()
-        self.liststore = Gtk.ListStore(float, str, str)
+        self.liststore = Gtk.ListStore(long, int, int, str, str)
         self.tree = Gtk.TreeView(self.liststore)
-        for i, column_title in enumerate(["Timestamp", "Event", "Value"]):
+        self.selection = self.tree.get_selection()
+        self.selection.set_mode(Gtk.SelectionMode.SINGLE)
+        self.selection.connect("changed", self.selection_changed)
+
+        for i, column_title in enumerate(["Timestamp", "PID", "CPU", "Event", "Value"]):
             renderer = Gtk.CellRendererText()
             column = Gtk.TreeViewColumn(column_title, renderer, text=i)
             self.tree.append_column(column)
@@ -298,9 +313,17 @@ class GraphWindow(Gtk.Window):
         mainbox.pack_start(treebox, True, True, 0)
         scroll.show_all()
         self.connect("delete-event", Gtk.main_quit)
+        self.rescale_cb = None
+        self.rescale_data = None
+        self.selected_line = None
+
+    def _rescale_cb(self, ts_start, ts_end):
+        self.rescale_cb(self, self.rescale_data, ts_start, ts_end)
 
     def set_rescale_cb(self, rescale_cb, user_data):
-        self.darea.set_rescale_cb(rescale_cb, user_data)
+        self.rescale_data = user_data
+        self.rescale_cb = rescale_cb
+        self.darea.set_rescale_cb(self._rescale_cb)
 
     def add_datapoints(self, name, xpoints, ypoints, color, connected=True):
         self.darea.add_datapoints(name, xpoints, ypoints, color, connected)
@@ -312,6 +335,21 @@ class GraphWindow(Gtk.Window):
 
     def on_button_toggled(self, button, name):
         self.darea.toggle_datapoint(name, button.get_active())
+
+    def add_flush_event(self, event):
+        tree_iter = self.liststore.append(event)
+        if event[0] == self.selected_line:
+            print("setting selected iter")
+            self.selection.select_iter(tree_iter)
+        self.tree.set_model(self.liststore)
+
+    def selection_changed(self, widget):
+        model, pathlist = widget.get_selected_rows()
+        for path in pathlist:
+            tree_iter = model.get_iter(path)
+            self.darea.selection_line = model.get_value(tree_iter, 0)
+            self.selected_line = model.get_value(tree_iter, 0)
+        self.darea.queue_draw()
 
     def main(self):
         self.tree.set_model(self.liststore)
