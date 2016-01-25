@@ -189,9 +189,18 @@ def add_bg(rec):
     elif Spaceinfo.BTRFS_BLOCK_GROUP_METADATA & flags:
         ret += "BTRFS_BLOCK_GROUP_METADATA, "
     else:
-        ret += "BTRFS_BLOCK_GROUOP_SYSTEM, "
+        ret += "BTRFS_BLOCK_GROUP_SYSTEM, "
     ret += pretty_size(rec.num_field("size"))
     return ret
+
+def record_space(flags, mixed_bg):
+    if flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
+        return True
+    if not mixed_bg:
+        return False
+    if flags & Spaceinfo.BTRFS_BLOCK_GROUP_DATA:
+        return True
+    return False
 
 def parse_tracefile(args, space_history):
     trace = Trace(args.infile)
@@ -218,6 +227,7 @@ def parse_tracefile(args, space_history):
     start_time = time.time()
     rem = 0
     run_limit = -1
+    mixed_bg = False
 
     seen_uuids = []
     if args.fsid:
@@ -267,6 +277,9 @@ def parse_tracefile(args, space_history):
 
             # We only care about metadata for space history
             if flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
+                if flags & Spaceinfo.BTRFS_BLOCK_GROUP_DATA and not mixed_bg:
+                    print("Mixed block group discovered")
+                    mixed_bg = True
                 space_history.add_space(rec.ts, total=rec.num_field("size"),
                                         used=rec.num_field("bytes_used"),
                                         readonly=rec.num_field("bytes_super"))
@@ -317,11 +330,11 @@ def parse_tracefile(args, space_history):
                 continue
             space_info = block_group.space_info
             if rec.name == "btrfs_reserved_extent_alloc":
-                if space_info.flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
+                if record_space(space_info.flags, mixed_bg):
                     space_history.add_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used += rec.num_field("len")
             else:
-                if space_info.flags & Spaceinfo.BTRFS_BLOCK_GROUP_METADATA:
+                if record_space(Space_info.flags, mixed_bg):
                     space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
         if rec.name == "btrfs_trigger_flush":
