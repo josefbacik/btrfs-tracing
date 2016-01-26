@@ -249,6 +249,8 @@ def parse_tracefile(args, space_history):
 
     cur_event = 0
     obj_count = 0
+    enospc_flushes = 0
+    preempt_flushes = 0
     start_time = time.time()
     rem = 0
     run_limit = -1
@@ -318,6 +320,7 @@ def parse_tracefile(args, space_history):
             block_group.space_info = space_info
         if rec.name == "btrfs_space_reservation":
             reserve_type = rec.str_field("type")
+            reserve = rec.num_field("reserve")
             if "enospc" in reserve_type:
                 space_info = find_space_info(rec.num_field("val"))
                 if args.nogtk:
@@ -332,7 +335,7 @@ def parse_tracefile(args, space_history):
                 continue
             elif "space_info" in reserve_type:
                 space_info = find_space_info(rec.num_field("val"))
-                if rec.num_field("reserve") == 1:
+                if reserve == 1:
                     space_info.bytes_may_use += rec.num_field("bytes")
                     space_history.add_space(rec.ts,
                                             reserved=rec.num_field("bytes"))
@@ -340,38 +343,49 @@ def parse_tracefile(args, space_history):
                     space_history.remove_space(rec.ts,
                                                reserved=rec.num_field("bytes"))
                     space_info.bytes_may_use -= rec.num_field("bytes")
+            elif "pinned" in reserve_type:
+                space_info = find_space_info(rec.num_field("val"))
+                if reserve == 0:
+                    if record_space(space_info.flags, mixed_bg):
+                        space_history.remove_space(rec.ts, used=rec.num_field("bytes"))
+                    space_info.bytes_used -= rec.num_field("bytes")
             if reserve_type not in reservations:
                 reservations[reserve_type] = 0
-            if rec.num_field("reserve") == 1:
+            if reserve == 1:
                 reservations[reserve_type] += rec.num_field("bytes")
             else:
                 reservations[reserve_type] -= rec.num_field("bytes")
-            del reserve_type
-        if (rec.name == "btrfs_reserved_extent_alloc" or
-            rec.name == "btrfs_reserved_extent_free" or
-            rec.name == "btrfs_reserve_extent" or
-            rec.name == "btrfs_reserve_extent_cluster"):
+        # For now just ignore btrfs_reserved_extent_alloc because we're not
+        # differentiating between bytes_reserved and bytes_used, we're just
+        # assuming they are the same.
+        if (rec.name == "btrfs_reserved_extent_free" or
+            rec.name == "btrfs_reserve_extent"):
             block_group = find_block_group(rec.num_field("start"))
             if not block_group:
                 print("Huh, didn't find a block group for %d" %
                         (rec.num_field("start")))
                 continue
             space_info = block_group.space_info
-            if (rec.name == "btrfs_reserved_extent_alloc" or
-                rec.name == "btrfs_reserve_extent" or
-                rec.name == "btrfs_reserve_extent_cluster"):
+            if rec.name == "btrfs_reserve_extent":
                 if record_space(space_info.flags, mixed_bg):
                     space_history.add_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used += rec.num_field("len")
             else:
-                if record_space(Space_info.flags, mixed_bg):
+                if record_space(space_info.flags, mixed_bg):
                     space_history.remove_space(rec.ts, used=rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
         if rec.name == "btrfs_trigger_flush":
+            if rec.str_field("reason") == "enospc":
+                enospc_flushes += 1
+            else:
+                preempt_flushes += 1
             flush_events.append([rec.ts, rec.pid, rec.cpu, rec.name, rec.str_field("reason")])
         if rec.name == "btrfs_flush_space":
             event_str = flush_event(rec)
             flush_events.append([rec.ts, rec.pid, rec.cpu, rec.name, event_str])
+
+    print("\nNumber of flushes triggered: enospc = %d, preempt = %d" %
+          (enospc_flushes, preempt_flushes))
     # If we had a run limit we don't want to do the leak detection as it will be
     # wrong
     if run_limit > 0:
@@ -426,12 +440,10 @@ def visualize_space(args, space_history):
 def record_events():
     events = [ "btrfs:btrfs_add_block_group",
                "btrfs:btrfs_space_reservation",
-               "btrfs:btrfs_reserved_extent_alloc",
                "btrfs:btrfs_reserved_extent_free",
                "btrfs:btrfs_trigger_flush",
                "btrfs:btrfs_flush_space",
                "btrfs:btrfs_reserve_extent",
-               "btrfs:btrfs_reserve_extent_cluster",
              ]
 
     cmd = [ 'trace-cmd', 'record', '-B', 'enospc', '-b', '20480', ]
