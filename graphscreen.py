@@ -3,6 +3,7 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk,Gdk
 import cairo
+from bisect import bisect_left
 
 NSECS_IN_SEC = 1000000000
 class GraphScreen(Gtk.DrawingArea):
@@ -209,6 +210,12 @@ class GraphScreen(Gtk.DrawingArea):
         xval = long(self.xmin + (adjx / xticks))
         return xval
 
+    def _bin_search(self, val, l):
+        pos = bisect_left(l, val, 0, len(l))
+        if pos == len(l):
+            return -1
+        return pos
+
     def tooltip(self, widget, x, y, keyboard_mode, tooltip):
         if self.enabled_plots == 0:
             return False
@@ -219,22 +226,8 @@ class GraphScreen(Gtk.DrawingArea):
 
         # Get the time position our cursor is currently at
         xval = self._get_xval(widget.get_allocation().width, x)
-        success = 0
 
-        # This is awful but I don't have the energy to be clever
-        # It also requires that xpoints be the same across all the plots which
-        # again is awful but is true for the btrfs tracing
-        data = self.plots[0]
-        if xval not in data.xpoints:
-            for i in range(0, len(data.xpoints)):
-                if data.xpoints[i] > xval:
-                    if (data.xpoints[i] - xval) < (data.xpoints[i-1] - xval):
-                        index = i
-                    else:
-                        index = i - 1
-                    break
-        else:
-            index = data.xpoints.index(xval)
+        index = self._bin_search(xval, self.plots[0].xpoints)
         tipstr = ("Time is %f" % (float(xval) / NSECS_IN_SEC))
         for data in self.plots:
             if data.enabled:
@@ -282,7 +275,7 @@ class GraphScreen(Gtk.DrawingArea):
 class GraphWindow(Gtk.Window):
     def __init__(self):
         Gtk.Window.__init__(self, title="Btrfs space utliziation")
-        self.set_default_size(1024, 768)
+        self.set_default_size(1600, 1200)
         mainbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         drawbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.labelbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)

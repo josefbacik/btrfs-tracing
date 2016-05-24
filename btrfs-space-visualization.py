@@ -25,44 +25,44 @@ class SpaceHistory:
         self.readonly_bytes = 0
         self.total_bytes = 0
 
-        self.total_hist = {}
-        self.used_hist = {}
-        self.reserved_hist = {}
-        self.readonly_hist = {}
-
-        self.total_times = []
-        self.total_vals = []
-        self.used_times = []
-        self.used_vals = []
-        self.reserved_times = []
-        self.reserved_vals = []
-        self.readonly_times = []
-        self.readonly_vals = []
+        self.running_totals = {}
+        self.hists = {}
+        self.times = {}
+        self.vals = {}
         self.enabled = True
 
-    def add_space(self, ts, total=0, used=0, reserved=0, readonly=0):
+    def add_space(self, name, ts, value):
         if not self.enabled:
             return
-        self.total_bytes += total
-        self.total_hist[ts] = self.total_bytes
-        self.used_bytes += used
-        self.used_hist[ts] = self.used_bytes
-        self.reserved_bytes += reserved
-        self.reserved_hist[ts] = self.reserved_bytes
-        self.readonly_bytes += readonly
-        self.readonly_hist[ts] = self.readonly_bytes
+        if name not in self.hists:
+            self.hists[name] = {}
+            self.running_totals[name] = 0
 
-    def remove_space(self, ts, total=0, used=0, reserved=0, readonly=0):
+            # We have to back populate the timestamps from the first event we've
+            # recorded upt through current time so that all the histories match
+            # up
+            for n in self.running_totals.keys():
+                if n == name:
+                    continue
+                for t in self.hists[n].keys():
+                    self.hists[name][t] = 0
+                break
+        self.running_totals[name] += value
+
+        for n in self.running_totals.keys():
+            self.hists[n][ts] = self.running_totals[n]
+
+    def remove_space(self, name, ts, value):
         if not self.enabled:
             return
-        self.total_bytes -= total
-        self.total_hist[ts] = self.total_bytes
-        self.used_bytes -= used
-        self.used_hist[ts] = self.used_bytes
-        self.reserved_bytes -= reserved
-        self.reserved_hist[ts] = self.reserved_bytes
-        self.readonly_bytes -= readonly
-        self.readonly_hist[ts] = self.readonly_bytes
+        if name not in self.hists:
+            print("WOOOOOOOPPPPSSSS!")
+            self.hists[name] = {}
+            self.running_totals[name] = 0
+        self.running_totals[name] -= value
+
+        for n in self.running_totals.keys():
+            self.hists[n][ts] = self.running_totals[n]
 
     def _build_list(self, hist, ts_start, ts_end):
         times = sorted(list(hist.keys()))
@@ -118,20 +118,14 @@ class SpaceHistory:
         return l
 
     def build_lists(self, max_vals=0, ts_start=0, ts_end=0):
-        self.total_times, self.total_vals = self._build_list(self.total_hist, ts_start, ts_end)
-        self.used_times, self.used_vals = self._build_list(self.used_hist, ts_start, ts_end)
-        self.reserved_times, self.reserved_vals = self._build_list(self.reserved_hist, ts_start, ts_end)
-        self.readonly_times, self.readonly_vals = self._build_list(self.readonly_hist, ts_start, ts_end)
-
+        for n in self.hists.keys():
+            print("length of hist %s is %d" % (n, len(self.hists[n].keys())))
+            self.times[n], self.vals[n] = self._build_list(self.hists[n],
+                                                           ts_start, ts_end)
         if max_vals:
-            self.total_times = self._scale_down_list(self.total_times, max_vals)
-            self.total_vals = self._average_down_list(self.total_vals, max_vals)
-            self.used_times = self._scale_down_list(self.used_times, max_vals)
-            self.used_vals = self._average_down_list(self.used_vals, max_vals)
-            self.reserved_times = self._scale_down_list(self.reserved_times, max_vals)
-            self.reserved_vals = self._average_down_list(self.reserved_vals, max_vals)
-            self.readonly_times = self._scale_down_list(self.readonly_times, max_vals)
-            self.readonly_vals = self._average_down_list(self.readonly_vals, max_vals)
+            for n in self.times.keys():
+                self.times[n] = self._scale_down_list(self.times[n], max_vals)
+                self.vals[n] = self._average_down_list(self.vals[n], max_vals)
 
 class Blockgroup:
     def __init__(self, offset, size):
@@ -287,14 +281,15 @@ def parse_tracefile(args, space_history):
         cur_event += 1
         obj_count += 1
 
-        # Deal with multiple fsid's in the trace data
-        fsid = binascii.hexlify(rec["fsid"].data)
-        if fsid not in seen_uuids:
-            if len(seen_uuids):
-                print("\nSaw a new uuid %s" % fsid)
-            seen_uuids.append(fsid)
-        if fsid != seen_uuids[0]:
-            continue
+        if "fsid" in rec:
+            # Deal with multiple fsid's in the trace data
+            fsid = binascii.hexlify(rec["fsid"].data)
+            if fsid not in seen_uuids:
+                if len(seen_uuids):
+                    print("\nSaw a new uuid %s" % fsid)
+                seen_uuids.append(fsid)
+            if fsid != seen_uuids[0]:
+                continue
 
         if rec.name == "btrfs_add_block_group":
             event_str = add_bg(rec)
@@ -306,10 +301,11 @@ def parse_tracefile(args, space_history):
                 if flags & Spaceinfo.BTRFS_BLOCK_GROUP_DATA and not mixed_bg:
                     print("\nMixed block group discovered")
                     mixed_bg = True
-                space_history.add_space(rec.ts, total=rec.num_field("size"),
-                                        used=rec.num_field("bytes_used"),
-                                        readonly=rec.num_field("bytes_super"))
-
+                space_history.add_space("Total", rec.ts, rec.num_field("size"))
+                space_history.add_space("Used", rec.ts,
+                                        rec.num_field("bytes_used"))
+                space_history.add_space("Readonly", rec.ts,
+                                        rec.num_field("bytes_super"))
             space_info = find_space_info(flags)
             space_info.add_block_group(rec.num_field("size"),
                                        rec.num_field("bytes_used"),
@@ -337,18 +333,26 @@ def parse_tracefile(args, space_history):
                 space_info = find_space_info(rec.num_field("val"))
                 if reserve == 1:
                     space_info.bytes_may_use += rec.num_field("bytes")
-                    space_history.add_space(rec.ts,
-                                            reserved=rec.num_field("bytes"))
+                    space_history.add_space("Reserved", rec.ts,
+                                            rec.num_field("bytes"))
                 else:
-                    space_history.remove_space(rec.ts,
-                                               reserved=rec.num_field("bytes"))
+                    space_history.remove_space("Reserved", rec.ts,
+                                               rec.num_field("bytes"))
                     space_info.bytes_may_use -= rec.num_field("bytes")
             elif "pinned" in reserve_type:
                 space_info = find_space_info(rec.num_field("val"))
                 if reserve == 0:
                     if record_space(space_info.flags, mixed_bg):
-                        space_history.remove_space(rec.ts, used=rec.num_field("bytes"))
+                        space_history.remove_space("Used", rec.ts,
+                                                   rec.num_field("bytes"))
                     space_info.bytes_used -= rec.num_field("bytes")
+            else:
+                if reserve == 1:
+                    space_history.add_space(reserve_type, rec.ts,
+                                            rec.num_field("bytes"))
+                else:
+                    space_history.remove_space(reserve_type, rec.ts,
+                                               rec.num_field("bytes"))
             if reserve_type not in reservations:
                 reservations[reserve_type] = 0
             if reserve == 1:
@@ -368,11 +372,13 @@ def parse_tracefile(args, space_history):
             space_info = block_group.space_info
             if rec.name == "btrfs_reserve_extent":
                 if record_space(space_info.flags, mixed_bg):
-                    space_history.add_space(rec.ts, used=rec.num_field("len"))
+                    space_history.add_space("Used", rec.ts,
+                                            rec.num_field("len"))
                 space_info.bytes_used += rec.num_field("len")
             else:
                 if record_space(space_info.flags, mixed_bg):
-                    space_history.remove_space(rec.ts, used=rec.num_field("len"))
+                    space_history.remove_space("Used", rec.ts,
+                                               rec.num_field("len"))
                 space_info.bytes_used -= rec.num_field("len")
         if rec.name == "btrfs_trigger_flush":
             if rec.str_field("reason") == "enospc":
@@ -414,10 +420,25 @@ def rescale_cb(window, space_history, ts_start, ts_end):
             if ts_end == 0 or events[0] <= ts_end:
                 window.add_flush_event(events)
     space_history.build_lists(4096, ts_start, ts_end)
-    window.darea.update_datapoints("Total", space_history.total_times, space_history.total_vals)
-    window.darea.update_datapoints("Used", space_history.used_times, space_history.used_vals)
-    window.darea.update_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals)
-    window.darea.update_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals)
+    for n in space_history.times.keys():
+        window.darea.update_datapoints(n, space_history.times[n],
+                                       space_history.vals[n])
+
+def color_index(index):
+    colors = [ (1, 1, 0),
+               (0, 1, 0),
+               (1, 0, 0),
+               (0, 0, 1),
+               (1, 0, 1),
+               (0, 1, 1),
+               (.5, 0, 0),
+               (0, .5, 0),
+               (0, 0, .5),
+               (.5, .5, 0),
+               (.5, 0, .5),
+               (0, .5, .5),
+               (.5, .5, .5)]
+    return colors[index]
 
 def visualize_space(args, space_history):
     from graphscreen import GraphWindow
@@ -429,10 +450,11 @@ def visualize_space(args, space_history):
 
     window = GraphWindow()
     window.set_rescale_cb(rescale_cb, space_history)
-    window.add_datapoints("Total", space_history.total_times, space_history.total_vals, (1, 1, 0))
-    window.add_datapoints("Used", space_history.used_times, space_history.used_vals, (0, 1, 0))
-    window.add_datapoints("Reserved", space_history.reserved_times, space_history.reserved_vals, (1, 0, 0))
-    window.add_datapoints("Readonly", space_history.readonly_times, space_history.readonly_vals, (0, 0, 1))
+    i = 0
+    for n in space_history.times.keys():
+        window.add_datapoints(n, space_history.times[n], space_history.vals[n],
+                              color_index(i))
+        i += 1
     for events in flush_events:
         window.add_flush_event(events)
     window.main()
